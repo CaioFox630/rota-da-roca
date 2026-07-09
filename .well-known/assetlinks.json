@@ -1,0 +1,8 @@
+[{
+  "relation": ["delegate_permission/common.handle_all_urls"],
+  "target": {
+    "namespace": "android_app",
+    "package_name": "io.github.caiofox630.twa",
+    "sha256_cert_fingerprints": ["5E:12:92:B9:E9:46:0D:DC:09:78:AE:A2:79:3A:EB:5E:4C:C5:98:E8:12:2D:24:48:24:D7:FC:28:F2:D7:5A:F2"]
+  }
+}]
