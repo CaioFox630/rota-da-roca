@@ -198,7 +198,10 @@ nav button.active{color:var(--teal);background:var(--teal-tint);}
   <!-- CLIENTES -->
   <section class="section active" id="sec-clientes">
     <div class="searchbar"><input type="text" id="buscaCliente" placeholder="Buscar cliente por nome ou bairro..."></div>
-    <button class="btn btn-ghost btn-block" id="btnAbrirImportar" style="margin-bottom:12px;">📥 Importar vários clientes de uma vez</button>
+    <div class="row" style="gap:8px;margin-bottom:12px;">
+      <button class="btn btn-ghost" id="btnAbrirImportar" style="flex:1;">📥 Importar vários</button>
+      <button class="btn btn-danger" id="btnAbrirApagarCidade" style="flex:1;">🗑️ Apagar por cidade</button>
+    </div>
     <div id="listaClientes"></div>
   </section>
 
@@ -226,6 +229,7 @@ nav button.active{color:var(--teal);background:var(--teal-tint);}
       <div class="eyebrow">Organizar entrega por bairro</div>
       <select id="cidadeRota" style="margin-top:0;"></select>
     </div>
+    <div id="mapsBox"></div>
     <div id="listaRota"></div>
     <button class="btn btn-ghost btn-block" id="btnCopiarRota" style="margin-top:6px;">📋 Copiar rota para enviar</button>
   </section>
@@ -283,6 +287,18 @@ João Pedro,, Pedralva
 Paula,, Pedralva"></textarea>
   <div class="hint" id="importPreview" style="margin-top:6px;"></div>
   <button class="btn btn-primary btn-block" id="confirmarImportar" style="margin-top:12px;">Importar clientes</button>
+</div></div>
+
+<!-- MODAL APAGAR POR CIDADE -->
+<div class="overlay" id="ovApagarCidade"><div class="modal">
+  <div class="modal-head"><h2>Apagar clientes por cidade</h2><button id="fecharApagarCidade">✕</button></div>
+  <div class="hint">Isso remove só os <b>cadastros de cliente</b> da cidade escolhida. Pedidos e lucros já registrados no histórico não são apagados.</div>
+  <label>Cidade</label>
+  <select id="apagarCidadeSelect"></select>
+  <div class="card" style="margin-top:12px;background:var(--rust-tint);border-color:var(--rust);">
+    <div id="apagarCidadeContagem" style="font-weight:700;color:var(--rust);"></div>
+  </div>
+  <button class="btn btn-danger btn-block" id="confirmarApagarCidade" style="margin-top:14px;">🗑️ Apagar esses clientes</button>
 </div></div>
 
 <!-- MODAL CLIENTE -->
@@ -599,6 +615,38 @@ $('confirmarImportar').addEventListener('click', async ()=>{
   toast(`${novos.length} cliente(s) importado(s)!`);
 });
 
+/* ---------- APAGAR CLIENTES POR CIDADE ---------- */
+function atualizaContagemApagarCidade(){
+  const cidade = $('apagarCidadeSelect').value;
+  const qtd = clientes.filter(c=>c.cidade===cidade).length;
+  $('apagarCidadeContagem').textContent = qtd===0
+    ? `Nenhum cliente cadastrado em "${cidade}".`
+    : `${qtd} cliente(s) cadastrado(s) em "${cidade}" serão apagados. Essa ação não pode ser desfeita.`;
+  $('confirmarApagarCidade').disabled = (qtd===0);
+}
+$('btnAbrirApagarCidade').addEventListener('click', ()=>{
+  const cidades = [...new Set(clientes.map(c=>c.cidade).filter(Boolean))].sort();
+  if(cidades.length===0){ toast('Nenhuma cidade cadastrada ainda'); return; }
+  $('apagarCidadeSelect').innerHTML = cidades.map(c=>`<option value="${c}">${c}</option>`).join('');
+  atualizaContagemApagarCidade();
+  $('ovApagarCidade').classList.add('active');
+});
+$('fecharApagarCidade').addEventListener('click', ()=> $('ovApagarCidade').classList.remove('active'));
+$('apagarCidadeSelect').addEventListener('change', atualizaContagemApagarCidade);
+$('confirmarApagarCidade').addEventListener('click', async ()=>{
+  const cidade = $('apagarCidadeSelect').value;
+  const qtd = clientes.filter(c=>c.cidade===cidade).length;
+  if(qtd===0) return;
+  if(!confirm(`Tem certeza que quer apagar os ${qtd} cliente(s) de "${cidade}"? Essa ação não pode ser desfeita.`)) return;
+  clientes = clientes.filter(c=>c.cidade!==cidade);
+  await saveClientes();
+  renderClientes();
+  atualizaBairrosDatalist();
+  populaCidadeRota();
+  $('ovApagarCidade').classList.remove('active');
+  toast(`${qtd} cliente(s) de "${cidade}" apagado(s).`);
+});
+
 /* ---------- ITENS (usado em Pedido e Carga) ---------- */
 function stepper(getQtd, setQtd, onChange){
   const wrap = document.createElement('div'); wrap.className='stepper';
@@ -862,6 +910,29 @@ function populaCidadeRota(){
   sel.value = cidades.includes(atual) ? atual : (CICLO[config.ciclo].cidades[0]||cidades[0]);
 }
 $('cidadeRota').addEventListener('change', renderRota);
+
+function enderecoCliente(c){
+  const partes = [[c.rua, c.numero].filter(Boolean).join(' '), c.bairro, c.cidade].filter(Boolean);
+  return partes.join(', ');
+}
+function temEnderecoUsavel(c){
+  return !!((c.rua && c.rua.trim()) || (c.bairro && c.bairro.trim())) && !!(c.cidade && c.cidade.trim());
+}
+function linkMapsUm(c){
+  return 'https://www.google.com/maps/dir/?api=1&destination=' + encodeURIComponent(enderecoCliente(c)) + '&travelmode=driving';
+}
+function linksMapsRota(listaClientesOrdenada){
+  const chunks = [];
+  for(let i=0; i<listaClientesOrdenada.length; i+=10){ chunks.push(listaClientesOrdenada.slice(i, i+10)); }
+  return chunks.map(chunk=>{
+    const enderecos = chunk.map(enderecoCliente);
+    const destino = enderecos[enderecos.length-1];
+    const waypoints = enderecos.slice(0, -1);
+    let url = 'https://www.google.com/maps/dir/?api=1&destination=' + encodeURIComponent(destino) + '&travelmode=driving';
+    if(waypoints.length) url += '&waypoints=' + waypoints.map(w=>encodeURIComponent(w)).join('|');
+    return url;
+  });
+}
 function renderRota(){
   const cidade = $('cidadeRota').value;
   const data = $('dataOp').value || todayISO();
@@ -870,17 +941,47 @@ function renderRota(){
   doCidade.forEach(c=>{ const b = c.bairro || '(sem bairro)'; (porBairro[b] = porBairro[b]||[]).push(c); });
   const bairros = Object.keys(porBairro).sort();
   const el = $('listaRota');
-  if(bairros.length===0){ el.innerHTML = `<div class="empty"><div class="big">🗺️</div>Nenhum cliente cadastrado em ${cidade}.</div>`; return; }
+  if(bairros.length===0){ el.innerHTML = `<div class="empty"><div class="big">🗺️</div>Nenhum cliente cadastrado em ${cidade}.</div>`; $('mapsBox').innerHTML=''; return; }
+
+  // clientes com pedido nesta data, na ordem em que aparecem (por bairro, depois nome) — usados pra montar a rota do Maps
+  const comPedidoOrdenado = [];
+  bairros.forEach(b=>{
+    porBairro[b].sort((a,b2)=>a.nome.localeCompare(b2.nome)).forEach(c=>{
+      const pedido = pedidos.find(p=>p.clienteId===c.id && p.data===data);
+      if(pedido && temEnderecoUsavel(c)) comPedidoOrdenado.push(c);
+    });
+  });
+  const semEndereco = comPedidoOrdenado.length===0 ? 0 : bairros.reduce((s,b)=> s + porBairro[b].filter(c=>{
+    const pedido = pedidos.find(p=>p.clienteId===c.id && p.data===data);
+    return pedido && !temEnderecoUsavel(c);
+  }).length, 0);
+
+  if(comPedidoOrdenado.length===0){
+    $('mapsBox').innerHTML = `<div class="card muted" style="margin-bottom:12px;">🗺️ Sem pedidos com endereço nesta data pra montar rota no Maps ainda.</div>`;
+  } else {
+    const links = linksMapsRota(comPedidoOrdenado);
+    const avisoFalta = semEndereco>0 ? `<div class="hint" style="margin-top:6px;">⚠️ ${semEndereco} cliente(s) com pedido não entraram na rota por falta de rua/bairro cadastrado.</div>` : '';
+    $('mapsBox').innerHTML = `<div class="card" style="margin-bottom:12px;">
+      <div class="eyebrow">Rota no Maps (${comPedidoOrdenado.length} parada${comPedidoOrdenado.length>1?'s':''})</div>
+      ${links.map((url,i)=> `<a class="btn btn-primary btn-block" href="${url}" target="_blank" style="${i>0?'margin-top:8px;':''}">🗺️ Abrir rota no Maps${links.length>1?` (parte ${i+1}/${links.length})`:''}</a>`).join('')}
+      ${avisoFalta}
+    </div>`;
+  }
+
   el.innerHTML = bairros.map(b=>{
     const itens = porBairro[b].sort((a,b2)=>a.nome.localeCompare(b2.nome)).map(c=>{
       const pedido = pedidos.find(p=>p.clienteId===c.id && p.data===data);
+      const podeNavegar = temEnderecoUsavel(c);
       return `<div class="client-item">
         <div class="info">
           <h3>${c.nome}</h3>
           <div class="addr">${[c.rua,c.numero].filter(Boolean).join(', ')}</div>
           ${pedido ? `<div class="order-line ${pedido.tipo}">${formatarPedido(pedido)}</div>` : '<div class="addr">— sem pedido registrado —</div>'}
         </div>
-        ${pedido ? `<label class="check-row"><input type="checkbox" ${pedido.entregue?'checked':''} onchange='marcarEntregue("${pedido.id}", this.checked)'></label>` : ''}
+        <div style="display:flex;flex-direction:column;align-items:center;gap:6px;">
+          ${podeNavegar ? `<a class="iconbtn" href="${linkMapsUm(c)}" target="_blank" style="text-decoration:none;">🗺️</a>` : ''}
+          ${pedido ? `<label class="check-row"><input type="checkbox" ${pedido.entregue?'checked':''} onchange='marcarEntregue("${pedido.id}", this.checked)'></label>` : ''}
+        </div>
       </div>`;
     }).join('');
     return `<div class="bairro-group"><h3>${b} <span class="muted">(${porBairro[b].length})</span></h3>${itens}</div>`;
